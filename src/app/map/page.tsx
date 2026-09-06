@@ -1,10 +1,10 @@
 "use client";
 
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Stars, Line, Html } from "@react-three/drei";
+import { OrbitControls, Stars, Line, useGLTF } from "@react-three/drei";
 import { GlassPanel } from "@/components/GlassPanel";
 import { useTelemetryStore, SensorNode } from "@/lib/store";
-import { useState } from "react";
+import { useState, Suspense } from "react";
 
 function Terrain() {
   return (
@@ -42,6 +42,20 @@ function UndergroundMine() {
         </group>
       ))}
     </group>
+  );
+}
+
+function CustomMineModel() {
+  // Load the 3D model from the public folder
+  const { scene } = useGLTF('/mining_quarry.glb');
+  
+  // Note: Adjust the scale or position array here if your model is too big/small
+  return (
+    <primitive 
+      object={scene} 
+      scale={[1, 1, 1]} 
+      position={[0, -10, 0]} 
+    />
   );
 }
 
@@ -164,7 +178,11 @@ export default function MapPage() {
           />
           
           <Terrain />
-          <UndergroundMine />
+          
+          {/* Custom Mining Quarry Model replacing the placeholder */}
+          <Suspense fallback={null}>
+            <CustomMineModel />
+          </Suspense>
           
           {nodes.map(node => (
             <NodeVisual 
