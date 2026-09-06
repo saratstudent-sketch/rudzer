@@ -35,7 +35,7 @@ export default function Navigation() {
       <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
         <div className="flex items-center gap-12">
           <Link href="/" className="text-xl font-bold tracking-widest text-primaryText">
-            SUBSENSE
+            R.U.D.Z.E.R- SUBSIDENCE MONITORING
           </Link>
           <nav className="hidden md:flex items-center gap-8">
             {navLinks.map((link) => (

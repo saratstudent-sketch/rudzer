@@ -8,7 +8,7 @@ import { GlobalSimulation } from "@/components/GlobalSimulation";
 const inter = Inter({ subsets: ["latin"], variable: '--font-inter' });
 
 export const metadata: Metadata = {
-  title: "SUBSENSE AI | Mine Subsidence Intelligence",
+  title: "R.U.D.Z.E.R- SUBSIDENCE MONITORING",
   description: "AI-powered real-time mine subsidence monitoring, prediction and early-warning platform.",
 };
 
