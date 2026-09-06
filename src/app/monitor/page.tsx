@@ -1,41 +1,35 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/GlassPanel";
 import { TelemetryCard } from "@/components/TelemetryCard";
 import { ShieldAlert, Activity, Move, Waves, Zap, Wifi } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-
-// Simulated Data
-const generateData = () => {
-  const now = new Date();
-  return Array.from({ length: 20 }).map((_, i) => ({
-    time: new Date(now.getTime() - (20 - i) * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    displacement: (Math.random() * 2 + 10).toFixed(1),
-    tilt: (Math.random() * 0.2 + 0.5).toFixed(2),
-  }));
-};
+import { useTelemetryStore } from "@/lib/store";
 
 export default function LiveMonitor() {
-  const [data, setData] = useState(generateData());
+  const { nodes, globalRisk } = useTelemetryStore();
   const [activeTab, setActiveTab] = useState('Displacement');
+  const [chartData, setChartData] = useState<any[]>([]);
 
-  // Simulate real-time updates
+  // Calculate aggregates
+  const maxDisplacement = Math.max(...nodes.map(n => n.displacement));
+  const maxTilt = Math.max(...nodes.map(n => n.tilt));
+  const activeNodes = nodes.filter(n => n.status === 'ONLINE').length;
+
   useEffect(() => {
-    const interval = setInterval(() => {
-      setData((prev) => {
-        const newData = [...prev.slice(1)];
-        newData.push({
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          displacement: (Math.random() * 2 + 10).toFixed(1),
-          tilt: (Math.random() * 0.2 + 0.5).toFixed(2),
-        });
-        return newData;
+    // Every time globalRisk changes (or every interval), we push a new data point to the chart
+    setChartData(prev => {
+      const newData = [...prev.slice(prev.length >= 20 ? 1 : 0)];
+      newData.push({
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        displacement: maxDisplacement,
+        tilt: maxTilt,
+        risk: globalRisk
       });
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
+      return newData;
+    });
+  }, [globalRisk, maxDisplacement, maxTilt]);
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
@@ -58,12 +52,12 @@ export default function LiveMonitor() {
           <div className="w-px h-8 bg-white/10" />
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-wider text-mutedText">Nodes</span>
-            <span className="text-sm font-semibold text-primaryText">48 / 50</span>
+            <span className="text-sm font-semibold text-primaryText">{activeNodes} / 50</span>
           </div>
           <div className="w-px h-8 bg-white/10" />
           <div className="flex flex-col">
-            <span className="text-[10px] uppercase tracking-wider text-mutedText">Last Sync</span>
-            <span className="text-sm font-semibold text-status-safe">2 sec ago</span>
+            <span className="text-[10px] uppercase tracking-wider text-mutedText">Network</span>
+            <span className="text-sm font-semibold text-status-safe">98.7%</span>
           </div>
         </GlassPanel>
       </div>
@@ -72,24 +66,26 @@ export default function LiveMonitor() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         <TelemetryCard
           title="Current Risk"
-          value="LOW"
-          subtitle="Risk score: 18 / 100"
+          value={globalRisk > 70 ? "CRITICAL" : globalRisk > 30 ? "WARNING" : "LOW"}
+          subtitle={`Risk score: ${globalRisk.toFixed(1)} / 100`}
           icon={ShieldAlert}
-          statusColor="text-status-safe"
+          statusColor={globalRisk > 70 ? "text-status-critical" : globalRisk > 30 ? "text-status-warning" : "text-status-safe"}
         />
         <TelemetryCard
           title="Maximum Tilt"
-          value="0.84°"
-          trend="+2.3%"
-          trendUp={true}
+          value={`${maxTilt.toFixed(3)}°`}
+          trend={maxTilt > 0.5 ? "+High" : "Stable"}
+          trendUp={maxTilt > 0.5}
           icon={Activity}
+          statusColor={maxTilt > 0.5 ? "text-status-warning" : "text-primaryText"}
         />
         <TelemetryCard
           title="Max Displacement"
-          value="12.8 mm"
-          trend="+1.4%"
-          trendUp={true}
+          value={`${maxDisplacement.toFixed(2)} mm`}
+          trend={maxDisplacement > 5 ? "+Rapid" : "Normal"}
+          trendUp={maxDisplacement > 5}
           icon={Move}
+          statusColor={maxDisplacement > 5 ? "text-status-critical" : "text-primaryText"}
         />
         <TelemetryCard
           title="Vibration Anomaly"
@@ -99,13 +95,13 @@ export default function LiveMonitor() {
         />
         <TelemetryCard
           title="Active Crack Events"
-          value="2"
+          value="0"
           icon={Zap}
-          statusColor="text-status-warning"
+          statusColor="text-primaryText"
         />
         <TelemetryCard
-          title="Network Health"
-          value="98.7%"
+          title="Avg Node Battery"
+          value={`${(nodes.reduce((acc, n) => acc + n.battery, 0) / nodes.length).toFixed(0)}%`}
           icon={Wifi}
           statusColor="text-status-safe"
         />
@@ -117,10 +113,10 @@ export default function LiveMonitor() {
         <GlassPanel className="p-6 lg:col-span-2">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold tracking-tight text-primaryText uppercase">
-              Surface Deformation
+              Peak Surface Deformation
             </h2>
             <div className="flex gap-2">
-              {['Tilt', 'Displacement', 'Combined'].map((tab) => (
+              {['Tilt', 'Displacement', 'Risk'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -136,7 +132,7 @@ export default function LiveMonitor() {
           
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+              <LineChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis 
                   dataKey="time" 
@@ -155,37 +151,40 @@ export default function LiveMonitor() {
                 <Line 
                   type="monotone" 
                   dataKey={activeTab.toLowerCase()} 
-                  stroke={activeTab === 'Tilt' ? '#64D2FF' : '#30D158'} 
+                  stroke={activeTab === 'Tilt' ? '#64D2FF' : activeTab === 'Risk' ? '#FF453A' : '#30D158'} 
                   strokeWidth={2}
                   dot={false}
-                  activeDot={{ r: 4, fill: '#111214', stroke: '#fff', strokeWidth: 2 }}
+                  isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </GlassPanel>
 
-        {/* 3D Map Placeholder (Will be actual 3D in /map) */}
+        {/* Dynamic Spatial Preview */}
         <GlassPanel className="p-6 flex flex-col justify-between relative overflow-hidden">
           <div className="relative z-10">
             <h2 className="text-lg font-semibold tracking-tight text-primaryText uppercase mb-2">
               Spatial Correlation
             </h2>
             <p className="text-sm text-secondaryText">
-              No significant spatial deformation clusters detected in Panel A.
+              {globalRisk > 70 
+                ? "CRITICAL: Multiple nodes detecting rapid correlated displacement." 
+                : globalRisk > 30 
+                ? "WARNING: Localized tilt anomaly detected."
+                : "No significant spatial deformation clusters detected."}
             </p>
           </div>
           
           <div className="mt-8 relative h-[200px] w-full rounded-lg border border-white/5 bg-background overflow-hidden flex items-center justify-center">
-            {/* Fake 3D node representation */}
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(255,255,255,0.05)_0%,_transparent_70%)]" />
-            <motion.div 
-              animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
-              transition={{ repeat: Infinity, duration: 3, ease: "easeInOut" }}
-              className="w-4 h-4 rounded-full bg-status-safe shadow-[0_0_20px_rgba(48,209,88,0.8)]"
-            />
+            
+            <div className={`w-32 h-32 rounded-full absolute blur-3xl opacity-20 transition-colors duration-1000 ${
+              globalRisk > 70 ? 'bg-status-critical' : globalRisk > 30 ? 'bg-status-warning' : 'bg-status-safe'
+            }`} />
+            
             <div className="absolute bottom-4 left-4 text-xs text-mutedText">
-              Live Network Map Preview
+              Live Network State: {globalRisk.toFixed(0)} Risk
             </div>
           </div>
         </GlassPanel>
