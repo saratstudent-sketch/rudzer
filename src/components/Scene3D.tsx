@@ -11,7 +11,7 @@ import {
   useRef,
 } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { SensorNode } from "@/lib/store";
 
 // ── Error Boundary ──────────────────────────────────────────────
@@ -46,16 +46,21 @@ function loadGLTFSafe(url: string): Promise<THREE.Group | null> {
   if (cached) return cached;
 
   const promise = new Promise<THREE.Group | null>((resolve) => {
-    const loader = new GLTFLoader();
-    loader.load(
-      url,
-      (gltf) => resolve(gltf.scene),
-      undefined,
-      (err) => {
-        console.warn(`[Scene3D] Failed to load GLB ${url}:`, err);
-        resolve(null);
-      }
-    );
+    try {
+      const loader = new GLTFLoader();
+      loader.load(
+        url,
+        (gltf) => resolve(gltf.scene),
+        undefined,
+        (err) => {
+          console.warn(`[Scene3D] Failed to load GLB ${url}:`, err);
+          resolve(null);
+        }
+      );
+    } catch (e) {
+      console.warn(`[Scene3D] GLTFLoader threw on init for ${url}:`, e);
+      resolve(null);
+    }
   });
 
   gltfCache.set(url, promise);

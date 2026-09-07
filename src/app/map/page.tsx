@@ -1,9 +1,43 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useState, Component, ReactNode } from "react";
 import { GlassPanel } from "@/components/GlassPanel";
 import { useTelemetryStore, SensorNode } from "@/lib/store";
+
+// ── Outer error boundary (keeps page chrome on ANY 3D failure) ──
+class Outer3DErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: any, info: any) {
+    console.error("/map Outer3DErrorBoundary caught:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="w-full h-full flex items-center justify-center bg-background">
+          <div className="text-center space-y-4 max-w-md px-6">
+            <div className="text-5xl">⛏️</div>
+            <h2 className="text-xl font-bold text-primaryText">3D Engine Unavailable</h2>
+            <p className="text-secondaryText text-sm">
+              The 3D scene failed to initialize. The sensor dashboard below is
+              still fully operational. Please refresh the page to retry.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── Dynamically import the 3D scene with SSR disabled ───────────────
 const Scene3D = dynamic(() => import("@/components/Scene3D"), {
@@ -122,12 +156,14 @@ export default function MapPage() {
         </GlassPanel>
       </div>
 
-      {/* 3D Canvas - loaded dynamically, no SSR */}
+      {/* 3D Canvas - loaded dynamically, no SSR, outer boundary keeps page chrome on any failure */}
       <div className="absolute inset-0 z-0 cursor-crosshair">
-        <Scene3D
-          nodes={nodes}
-          onNodeClick={(node) => setSelectedNode(node)}
-        />
+        <Outer3DErrorBoundary>
+          <Scene3D
+            nodes={nodes}
+            onNodeClick={(node) => setSelectedNode(node)}
+          />
+        </Outer3DErrorBoundary>
       </div>
     </div>
   );
