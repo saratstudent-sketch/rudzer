@@ -1,17 +1,14 @@
 "use client";
 
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Stars } from "@react-three/drei";
+import { OrbitControls, Stars, useGLTF } from "@react-three/drei";
 import {
   Component,
   ReactNode,
   useMemo,
-  useEffect,
-  useState,
-  useRef,
+  Suspense,
 } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { SensorNode } from "@/lib/store";
 
 // ── Error Boundary ──────────────────────────────────────────────
@@ -33,38 +30,6 @@ class ErrorBoundary extends Component<
     if (this.state.hasError) return this.props.fallback;
     return this.props.children;
   }
-}
-
-// ── Safe GLTF promise cache (swallows 404s, never rejects loudly) ─
-const gltfCache = new Map<
-  string,
-  Promise<THREE.Group | null>
->();
-
-function loadGLTFSafe(url: string): Promise<THREE.Group | null> {
-  const cached = gltfCache.get(url);
-  if (cached) return cached;
-
-  const promise = new Promise<THREE.Group | null>((resolve) => {
-    try {
-      const loader = new GLTFLoader();
-      loader.load(
-        url,
-        (gltf) => resolve(gltf.scene),
-        undefined,
-        (err) => {
-          console.warn(`[Scene3D] Failed to load GLB ${url}:`, err);
-          resolve(null);
-        }
-      );
-    } catch (e) {
-      console.warn(`[Scene3D] GLTFLoader threw on init for ${url}:`, e);
-      resolve(null);
-    }
-  });
-
-  gltfCache.set(url, promise);
-  return promise;
 }
 
 // ── Procedural Open-Pit Mine ─────────────────────────────────────
@@ -103,26 +68,11 @@ function ProceduralMine() {
   );
 }
 
-// ── GLB Model loader (safe: never throws, auto-fallback to procedural) ──
-function MineGLB() {
-  const [scene, setScene] = useState<THREE.Group | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    loadGLTFSafe("/mining_quarry.glb").then((result) => {
-      if (!mounted.current) return;
-      setScene(result);
-      setLoaded(true);
-    });
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+// ── GLB Model loader (uses drei useGLTF, deep-clones for StrictMode) ──
+function MineGLBInner() {
+  const { scene } = useGLTF("/mining_quarry.glb");
 
   const clonedScene = useMemo(() => {
-    if (!scene) return null;
     const clone = scene.clone(true);
     clone.traverse((child: any) => {
       if (child.isMesh) {
@@ -141,14 +91,6 @@ function MineGLB() {
     return clone;
   }, [scene]);
 
-  if (!loaded) {
-    return <ProceduralMine />;
-  }
-
-  if (!clonedScene) {
-    return <ProceduralMine />;
-  }
-
   return (
     <primitive
       object={clonedScene}
@@ -156,6 +98,17 @@ function MineGLB() {
       position={[0, -4, 0]}
       dispose={null}
     />
+  );
+}
+
+// ── GLB Model (hardened: local ErrorBoundary + Suspense wrapper, never leaks) ──
+function MineGLB() {
+  return (
+    <ErrorBoundary fallback={<ProceduralMine />}>
+      <Suspense fallback={<ProceduralMine />}>
+        <MineGLBInner />
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
@@ -256,10 +209,8 @@ function SceneContent({
       {/* Ground */}
       <Ground />
 
-      {/* Mine: try real GLB, fallback to procedural (handled inside MineGLB) */}
-      <ErrorBoundary fallback={<ProceduralMine />}>
-        <MineGLB />
-      </ErrorBoundary>
+      {/* Mine: try real GLB, fallback to procedural (handled inside MineGLB wrapper) */}
+      <MineGLB />
 
       {/* 50 Sensor Nodes */}
       {nodes.map((node) => (
