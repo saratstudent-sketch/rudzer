@@ -1,12 +1,20 @@
 "use client";
 
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Stars, useGLTF } from "@react-three/drei";
-import { Suspense, Component, ReactNode } from "react";
-import { SensorNode } from "@/lib/store";
+import { OrbitControls, Stars } from "@react-three/drei";
+import {
+  Component,
+  ReactNode,
+  useMemo,
+  useEffect,
+  useState,
+  useRef,
+} from "react";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { SensorNode } from "@/lib/store";
 
-// ─── Error Boundary ───────────────────────────────────────────────
+// ── Error Boundary ──────────────────────────────────────────────
 class ErrorBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
   { hasError: boolean }
@@ -18,47 +26,136 @@ class ErrorBoundary extends Component<
   static getDerivedStateFromError() {
     return { hasError: true };
   }
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("Scene3D ErrorBoundary caught:", error, errorInfo);
+  }
   render() {
     if (this.state.hasError) return this.props.fallback;
     return this.props.children;
   }
 }
 
-// ─── Procedural Open-Pit Mine (fallback) ──────────────────────────
+// ── Safe GLTF promise cache (swallows 404s, never rejects loudly) ─
+const gltfCache = new Map<
+  string,
+  Promise<THREE.Group | null>
+>();
+
+function loadGLTFSafe(url: string): Promise<THREE.Group | null> {
+  const cached = gltfCache.get(url);
+  if (cached) return cached;
+
+  const promise = new Promise<THREE.Group | null>((resolve) => {
+    const loader = new GLTFLoader();
+    loader.load(
+      url,
+      (gltf) => resolve(gltf.scene),
+      undefined,
+      (err) => {
+        console.warn(`[Scene3D] Failed to load GLB ${url}:`, err);
+        resolve(null);
+      }
+    );
+  });
+
+  gltfCache.set(url, promise);
+  return promise;
+}
+
+// ── Procedural Open-Pit Mine ─────────────────────────────────────
 function ProceduralMine() {
+  const levels = [
+    { r: 22, y: 0, color: "#1a1a2e" },
+    { r: 17, y: -2, color: "#16213e" },
+    { r: 13, y: -4, color: "#0f3460" },
+    { r: 9,  y: -6, color: "#1a1a2e" },
+    { r: 5,  y: -8, color: "#0d0d1a" },
+  ];
   return (
-    <group position={[0, -8, 0]}>
-      {[0, 1, 2, 3, 4].map((level) => (
-        <mesh key={level} position={[0, -level * 1.5, 0]}>
-          <torusGeometry args={[18 - level * 3, 1.2, 8, 64]} />
-          <meshStandardMaterial
-            color={new THREE.Color().setHSL(0.6, 0.3, 0.08 + level * 0.02)}
-            roughness={0.9}
-          />
+    <group>
+      {levels.map((lvl, i) => (
+        <mesh key={i} position={[0, lvl.y, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[i === levels.length - 1 ? 0 : levels[i + 1]?.r ?? 0, lvl.r, 64]} />
+          <meshStandardMaterial color={lvl.color} roughness={0.9} metalness={0.1} />
         </mesh>
       ))}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -7.6, 0]}>
-        <circleGeometry args={[6, 32]} />
-        <meshStandardMaterial color="#0d0d1a" />
-      </mesh>
+      {/* Haul roads */}
+      {[0, 90, 180, 270].map((angle, i) => (
+        <mesh
+          key={`road-${i}`}
+          position={[
+            Math.cos((angle * Math.PI) / 180) * 13,
+            -4,
+            Math.sin((angle * Math.PI) / 180) * 13,
+          ]}
+          rotation={[0, (angle * Math.PI) / 180, 0]}
+        >
+          <boxGeometry args={[10, 0.1, 2]} />
+          <meshStandardMaterial color="#2a2a4a" />
+        </mesh>
+      ))}
     </group>
   );
 }
 
-// ─── Your GLB Model ────────────────────────────────────────────────
-function MineModel() {
-  const { scene } = useGLTF("/mining_quarry.glb");
+// ── GLB Model loader (safe: never throws, auto-fallback to procedural) ──
+function MineGLB() {
+  const [scene, setScene] = useState<THREE.Group | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    loadGLTFSafe("/mining_quarry.glb").then((result) => {
+      if (!mounted.current) return;
+      setScene(result);
+      setLoaded(true);
+    });
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const clonedScene = useMemo(() => {
+    if (!scene) return null;
+    const clone = scene.clone(true);
+    clone.traverse((child: any) => {
+      if (child.isMesh) {
+        if (child.geometry) child.geometry = child.geometry.clone();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material = child.material.map((m: THREE.Material) =>
+              m.clone()
+            );
+          } else {
+            child.material = child.material.clone();
+          }
+        }
+      }
+    });
+    return clone;
+  }, [scene]);
+
+  if (!loaded) {
+    return <ProceduralMine />;
+  }
+
+  if (!clonedScene) {
+    return <ProceduralMine />;
+  }
+
   return (
     <primitive
-      object={scene}
-      scale={[0.12, 0.12, 0.12]}
-      position={[0, -6, 0]}
+      object={clonedScene}
+      scale={0.1}
+      position={[0, -4, 0]}
+      dispose={null}
     />
   );
 }
 
-// ─── Sensor Node ──────────────────────────────────────────────────
-function SensorNodeMesh({
+// ── Single Sensor Node ───────────────────────────────────────────
+function SensorNode3D({
   node,
   onClick,
 }: {
@@ -66,68 +163,141 @@ function SensorNodeMesh({
   onClick: () => void;
 }) {
   const color =
-    node.riskScore > 70 ? "#FF453A" : node.riskScore > 30 ? "#FFD60A" : "#30D158";
-
-  const points: [number, number, number][] = [
-    [node.x, node.y + 0.5, node.z],
-    [node.x, -7, node.z],
-  ];
+    node.riskScore > 70
+      ? "#FF453A"
+      : node.riskScore > 30
+      ? "#FFD60A"
+      : "#30D158";
 
   return (
-    <group onClick={(e) => { e.stopPropagation(); onClick(); }}>
-      {/* Drop line */}
-      <line>
-        <bufferGeometry
-          attach="geometry"
-          {...{
-            attributes: {
-              position: new THREE.BufferAttribute(
-                new Float32Array(points.flat()),
-                3
-              ),
-            },
-          }}
-        />
-        <lineBasicMaterial attach="material" color={color} opacity={0.15} transparent />
-      </line>
-
-      {/* Base */}
-      <mesh position={[node.x, node.y + 0.5, node.z]}>
+    <group
+      position={[node.x, 0.8, node.z]}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      {/* Sensor base */}
+      <mesh>
         <boxGeometry args={[0.5, 0.2, 0.5]} />
-        <meshStandardMaterial color="#1a1a2e" />
+        <meshStandardMaterial color="#1e1e2e" roughness={0.8} />
       </mesh>
 
       {/* Status orb */}
-      <mesh position={[node.x, node.y + 0.9, node.z]}>
-        <sphereGeometry args={[0.2, 12, 12]} />
+      <mesh position={[0, 0.4, 0]}>
+        <sphereGeometry args={[0.22, 16, 16]} />
         <meshBasicMaterial color={color} />
       </mesh>
 
-      {/* Pulse ring for high risk */}
-      {node.riskScore > 50 && (
-        <mesh
-          position={[node.x, node.y + 0.52, node.z]}
-          rotation={[-Math.PI / 2, 0, 0]}
-        >
-          <ringGeometry args={[0.6, 0.8, 32]} />
-          <meshBasicMaterial color={color} transparent opacity={0.35} />
+      {/* Risk ring */}
+      {node.riskScore > 40 && (
+        <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.5, 0.7, 32]} />
+          <meshBasicMaterial color={color} transparent opacity={0.4} side={2} />
         </mesh>
       )}
     </group>
   );
 }
 
-// ─── Ground Grid ──────────────────────────────────────────────────
+// ── Ground plane ─────────────────────────────────────────────────
 function Ground() {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-      <planeGeometry args={[100, 100, 50, 50]} />
-      <meshBasicMaterial color="#0A0A0C" wireframe opacity={0.15} transparent />
+      <planeGeometry args={[120, 120, 60, 60]} />
+      <meshBasicMaterial color="#080810" wireframe opacity={0.12} transparent />
     </mesh>
   );
 }
 
-// ─── Scene3D Component ────────────────────────────────────────────
+// ── Scene content (inside Canvas) ────────────────────────────────
+function SceneContent({
+  nodes,
+  onNodeClick,
+}: {
+  nodes: SensorNode[];
+  onNodeClick: (node: SensorNode) => void;
+}) {
+  return (
+    <>
+      {/* Lighting */}
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[25, 50, 15]} intensity={1.8} castShadow />
+      <pointLight position={[-20, 30, -20]} intensity={0.5} color="#4488ff" />
+      <pointLight position={[20, 15, 20]} intensity={0.3} color="#ff8844" />
+
+      {/* Environment */}
+      <Stars
+        radius={120}
+        depth={50}
+        count={5000}
+        factor={3}
+        saturation={0}
+        fade
+        speed={0.5}
+      />
+
+      {/* Controls */}
+      <OrbitControls
+        enablePan
+        enableZoom
+        enableRotate
+        maxPolarAngle={Math.PI / 2 + 0.25}
+        minDistance={10}
+        maxDistance={130}
+        autoRotate={false}
+      />
+
+      {/* Ground */}
+      <Ground />
+
+      {/* Mine: try real GLB, fallback to procedural (handled inside MineGLB) */}
+      <ErrorBoundary fallback={<ProceduralMine />}>
+        <MineGLB />
+      </ErrorBoundary>
+
+      {/* 50 Sensor Nodes */}
+      {nodes.map((node) => (
+        <SensorNode3D
+          key={node.id}
+          node={node}
+          onClick={() => onNodeClick(node)}
+        />
+      ))}
+    </>
+  );
+}
+
+// ── Fallback scene (no GLB, no fancy drei, minimal deps) ─────────
+function FallbackScene({
+  nodes,
+  onNodeClick,
+}: {
+  nodes: SensorNode[];
+  onNodeClick: (node: SensorNode) => void;
+}) {
+  return (
+    <Canvas
+      camera={{ position: [0, 35, 55], fov: 48 }}
+      gl={{ antialias: true }}
+    >
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[25, 50, 15]} intensity={1.8} />
+      <pointLight position={[-20, 30, -20]} intensity={0.5} color="#4488ff" />
+      <Ground />
+      <ProceduralMine />
+      {nodes.map((node) => (
+        <SensorNode3D
+          key={node.id}
+          node={node}
+          onClick={() => onNodeClick(node)}
+        />
+      ))}
+    </Canvas>
+  );
+}
+
+// ── Main Scene (outer error boundary) ────────────────────────────
 export default function Scene3D({
   nodes,
   onNodeClick,
@@ -136,39 +306,15 @@ export default function Scene3D({
   onNodeClick: (node: SensorNode) => void;
 }) {
   return (
-    <Canvas camera={{ position: [0, 30, 50], fov: 50 }} shadows>
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[20, 40, 10]} intensity={1.5} castShadow />
-      <pointLight position={[-15, 25, -15]} intensity={0.4} color="#4488ff" />
-
-      <Stars radius={120} depth={60} count={4000} factor={3} saturation={0} fade speed={1} />
-
-      <OrbitControls
-        enablePan
-        enableZoom
-        enableRotate
-        maxPolarAngle={Math.PI / 2 + 0.3}
-        minDistance={8}
-        maxDistance={120}
-      />
-
-      <Ground />
-
-      {/* Your GLB → fallback to procedural if it fails */}
-      <ErrorBoundary fallback={<ProceduralMine />}>
-        <Suspense fallback={<ProceduralMine />}>
-          <MineModel />
-        </Suspense>
-      </ErrorBoundary>
-
-      {/* 50 Sensor Nodes */}
-      {nodes.map((node) => (
-        <SensorNodeMesh
-          key={node.id}
-          node={node}
-          onClick={() => onNodeClick(node)}
-        />
-      ))}
-    </Canvas>
+    <ErrorBoundary
+      fallback={<FallbackScene nodes={nodes} onNodeClick={onNodeClick} />}
+    >
+      <Canvas
+        camera={{ position: [0, 35, 55], fov: 48 }}
+        gl={{ antialias: true }}
+      >
+        <SceneContent nodes={nodes} onNodeClick={onNodeClick} />
+      </Canvas>
+    </ErrorBoundary>
   );
 }
